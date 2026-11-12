@@ -1,0 +1,1 @@
+CREATE TABLE collaborations (id TEXT PRIMARY KEY, data TEXT NOT NULL);
