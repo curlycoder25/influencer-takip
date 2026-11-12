@@ -1,0 +1,1 @@
+CREATE TABLE brands (name_key TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL);

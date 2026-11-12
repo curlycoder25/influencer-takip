@@ -1,5 +1,7 @@
 const $ = id => document.getElementById(id);
-const brands = {'FastDrama':'#d65075','Yemek Market':'#eb654c','Amore':'#9564e2'};
+const brandColors = new Map([['FastDrama','#d65075'],['Yemek Market','#eb654c'],['Amore','#9564e2']]);
+let registeredBrands = [...brandColors.keys()];
+const brandNames = () => [...new Set([...registeredBrands,...records.map(record=>record.brand)])];
 const fields = ['name','handle','brand','type','start','end','tracking','payment','paymentStatus','notes'];
 const paymentLabels = {pending:'Ödeme bekliyor',half:'İlk yarı ödendi',paid:'Tamamı ödendi'};
 const form = $('form');
@@ -22,13 +24,13 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&
 const today = () => new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Famagusta'}).format(new Date());
 const safeUrl = value => /^https?:\/\//i.test(value || '') ? escape(value) : '';
 const stamp = value => value ? value.split('-').reverse().join('.') : '—';
-const dot = name => '<i class="dot" style="--brand:'+brands[name]+'"></i>';
+const dot = name => '<i class="dot" style="--brand:'+(brandColors.get(name)||'#ac96ff')+'"></i>';
 const published = record => record.items.filter(item => item.actual).length;
 const overdue = record => record.items.filter(item => !item.actual && item.due && item.due < today()).length;
 const dateOrder = record => record.items.filter(item => !item.actual && item.due).map(item => item.due).sort()[0] || '';
 function render() {
-  $('brands').innerHTML = '<small>Markalar</small>'+['',...Object.keys(brands)].map(name =>
-    '<button data-brand="'+name+'" class="'+(brand===name?'active':'')+'" aria-pressed="'+(brand===name)+'">'+(name?dot(name):'▦')+' '+(name||'Tüm markalar')+'</button>').join('');
+  $('brands').innerHTML = '<small>Markalar</small>'+['',...brandNames()].map(name =>
+    '<button data-brand="'+escape(name)+'" class="'+(brand===name?'active':'')+'" aria-pressed="'+(brand===name)+'">'+(name?dot(name):'▦')+' '+(escape(name)||'Tüm markalar')+'</button>').join('');
   if (!ready) return;
   const query = $('search').value.trim().toLocaleLowerCase('tr');
   const month = $('month').value;
@@ -82,6 +84,7 @@ function open(record, draft=false) {
   $('remove').hidden=!edit;
   $('renew').hidden=!edit || edit.type!=='Aylık';
   const values=record || {brand:brand||'FastDrama',type:'Aylık',start:today()};
+  form.elements.brand.replaceChildren(...brandNames().map(name=>new Option(name,name)));
   for (const key of fields) form.elements[key].value=values[key]||(key==='paymentStatus'?'pending':'');
   for (const key of targetFields) form.elements[key].value=values[key]??'';
   syncTargets();
@@ -91,11 +94,14 @@ function open(record, draft=false) {
 }
 async function api(method, path='/api/records', data) {
   const response=await fetch(path,{method,headers:{'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});
-  if (!response.ok) throw Error(response.status===400?'Tarihleri ve bağlantıları kontrol et.':'Bilgiler kaydedilemedi veya yüklenemedi. Tekrar dene.');
+  if (!response.ok) {
+    const result=await response.json().catch(()=>null);
+    throw Error(result?.error||'Bilgiler kaydedilemedi veya yüklenemedi. Tekrar dene.');
+  }
   return response.json();
 }
 async function load() {
-  try { records=await api('GET'); ready=true; $('notice').textContent=''; render(); }
+  try { [records,registeredBrands]=await Promise.all([api('GET'),api('GET','/api/brands')]); ready=true; $('notice').textContent=''; render(); }
   catch (error) {
     $('notice').textContent=error.message;
     $('list').innerHTML='<div class="empty"><button data-retry>Yeniden yükle</button></div>';
@@ -161,6 +167,30 @@ $('list').onclick=event=>{
 };
 $('search').oninput=render;
 $('filter').onchange=$('month').onchange=render;
+const brandForm=$('brandForm');
+$('addBrand').onclick=()=>{
+  brandForm.reset();
+  $('brandNotice').textContent='';
+  $('brandDialog').showModal();
+};
+$('closeBrand').onclick=()=>$('brandDialog').close();
+brandForm.onsubmit=async event=>{
+  event.preventDefault();
+  const save=$('saveBrand');
+  if(save.disabled) return;
+  save.disabled=true;
+  $('brandNotice').textContent='';
+  try {
+    const {name}=await api('POST','/api/brands',{name:brandForm.elements.brandName.value});
+    registeredBrands.push(name);
+    brand=name;
+    status='';
+    $('brandDialog').close();
+    render();
+  } catch(error) {
+    $('brandNotice').textContent=error.message;
+  } finally {save.disabled=false;}
+};
 const backupFile=$('backupFile');
 const backupNotice=$('backupNotice');
 function backupBusy(value) {
@@ -170,8 +200,8 @@ $('downloadBackup').onclick=async()=>{
   backupBusy(true);
   backupNotice.textContent='';
   try {
-    const current=await api('GET');
-    const backup={format:'influencer-takip',version:1,exportedAt:new Date().toISOString(),records:current};
+    const [current,savedBrands]=await Promise.all([api('GET'),api('GET','/api/brands')]);
+    const backup={format:'influencer-takip',version:1,exportedAt:new Date().toISOString(),records:current,brands:savedBrands};
     const url=URL.createObjectURL(new Blob([JSON.stringify(backup,null,2)],{type:'application/json'}));
     const link=document.createElement('a');
     link.href=url;
