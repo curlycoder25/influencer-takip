@@ -81,10 +81,32 @@ async function restore(request, db) {
   return json({added:result.meta.changes,existing:entries.length-result.meta.changes});
 }
 const json = (body,status=200) => Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
-const asset = (body,type) => new Response(body,{headers:{'Content-Type':type,'X-Content-Type-Options':'nosniff',
+const asset = (body,type) => new Response(body,{headers:{'Cache-Control':'no-store','Content-Type':type,'X-Content-Type-Options':'nosniff',
   'Content-Security-Policy':"default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'"}});
+const encoder = new TextEncoder();
+const digest = async value => new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(value)));
+async function isAuthorized(request,username,password) {
+  const encoded=request.headers.get('Authorization')?.match(/^Basic ([A-Za-z0-9+/]+={0,2})$/i)?.[1];
+  if(!encoded || encoded.length>4096) return false;
+  let submitted;
+  try { submitted=new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(encoded),char=>char.charCodeAt(0))); }
+  catch { return false; }
+  const [expected,actual]=await Promise.all([digest(username+':'+password),digest(submitted)]);
+  let difference=0;
+  for(let i=0;i<expected.length;i++) difference|=expected[i]^actual[i];
+  return difference===0;
+}
 export default {
   async fetch(request,env) {
+    const username=env.PANEL_USERNAME??'admin';
+    const password=env.PANEL_PASSWORD;
+    if(!username || username.includes(':') || !password) return json({error:'Panel giriş ayarları eksik.'},503);
+    if(!await isAuthorized(request,username,password)) {
+      return new Response('Devam etmek için giriş yapın.',{status:401,headers:{
+        'WWW-Authenticate':'Basic realm="Influencer Takip", charset="UTF-8"',
+        'Cache-Control':'no-store','Content-Type':'text/plain; charset=utf-8'
+      }});
+    }
     const url=new URL(request.url);
     if(request.method==='GET' && url.pathname==='/') return asset(PAGE,'text/html; charset=utf-8');
     if(request.method==='GET' && url.pathname==='/app.js') return asset(CLIENT,'application/javascript; charset=utf-8');
