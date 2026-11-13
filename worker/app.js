@@ -1,11 +1,12 @@
 const $ = id => document.getElementById(id);
 const brandColors = new Map([['FastDrama','#d65075'],['Yemek Market','#eb654c'],['Amore','#9564e2']]);
 let registeredBrands = [...brandColors.keys()];
-const brandNames = () => [...new Set([...registeredBrands,...records.map(record=>record.brand)])];
+const brandName = entry => typeof entry==='string'?entry:entry.name;
+const brandNames = () => [...new Set([...registeredBrands.map(brandName),...records.map(record=>record.brand)])];
 const fields = ['name','handle','brand','type','start','end','tracking','payment','paymentStatus','notes'];
 const paymentLabels = {pending:'Ödeme bekliyor',half:'İlk yarı ödendi',paid:'Tamamı ödendi'};
 const form = $('form');
-const targetFields = ['weeklyStories','monthlyReels'];
+const targetFields = ['weeklyStories','monthlyStories','monthlyReels'];
 const syncTargets = () => {
   const monthly = form.elements.type.value === 'Aylık';
   $('monthlyTargets').hidden = !monthly;
@@ -16,6 +17,7 @@ function targetSummary(record) {
   if (record.type !== 'Aylık') return '';
   const targets = [];
   if (record.weeklyStories != null) targets.push('Haftada ' + record.weeklyStories + ' Story');
+  if (record.monthlyStories != null) targets.push('Ayda ' + record.monthlyStories + ' Story');
   if (record.monthlyReels != null) targets.push('Ayda ' + record.monthlyReels + ' Reels');
   return targets.length ? '<small>Hedef · ' + targets.join(' · ') + '</small>' : '';
 }
@@ -24,7 +26,12 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&
 const today = () => new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Famagusta'}).format(new Date());
 const safeUrl = value => /^https?:\/\//i.test(value || '') ? escape(value) : '';
 const stamp = value => value ? value.split('-').reverse().join('.') : '—';
-const dot = name => '<i class="dot" style="--brand:'+(brandColors.get(name)||'#ac96ff')+'"></i>';
+const dot = name => {
+  const logo=registeredBrands.find(entry=>brandName(entry)===name)?.logo;
+  return logo && /^(?:https:\/\/|data:image\/webp;base64,)/i.test(logo)
+    ? '<img class="brand-logo" src="'+escape(logo)+'" alt="" referrerpolicy="no-referrer">'
+    : '<i class="dot" style="--brand:'+(brandColors.get(name)||'#ac96ff')+'"></i>';
+};
 const published = record => record.items.filter(item => item.actual).length;
 const overdue = record => record.items.filter(item => !item.actual && item.due && item.due < today()).length;
 const dateOrder = record => record.items.filter(item => !item.actual && item.due).map(item => item.due).sort()[0] || '';
@@ -168,29 +175,79 @@ $('list').onclick=event=>{
 $('search').oninput=render;
 $('filter').onchange=$('month').onchange=render;
 const brandForm=$('brandForm');
-$('addBrand').onclick=()=>{
-  brandForm.reset();
+let selectedLogo='', logoLoading=false;
+function showLogo() {
+  const preview=$('brandLogoPreview');
+  preview.hidden=!selectedLogo;
+  $('clearLogo').hidden=!selectedLogo;
+  if(selectedLogo) preview.src=selectedLogo;
+  else preview.removeAttribute('src');
+}
+async function resizeLogo(file) {
+  if(!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size>5*1024*1024) {
+    throw Error('En fazla 5 MB boyutunda PNG, JPEG veya WebP seç.');
+  }
+  const bitmap=await createImageBitmap(file);
+  try {
+    const scale=Math.min(1,192/Math.max(bitmap.width,bitmap.height));
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+    canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+    canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);
+    const logo=canvas.toDataURL('image/webp',0.82);
+    if(!logo.startsWith('data:image/webp;base64,') || logo.length>80000) throw Error('Bu görsel işlenemedi. Daha küçük bir görsel seç.');
+    return logo;
+  } finally {bitmap.close();}
+}
+brandForm.elements.brandLogo.onchange=async event=>{
+  const [file]=event.target.files;
+  if(!file || logoLoading) return;
+  logoLoading=true;
+  const controls=[$('saveBrand'),$('deleteBrand'),$('brandPicker'),$('closeBrand'),$('clearLogo'),event.target];
+  controls.forEach(control=>control.disabled=true);
   $('brandNotice').textContent='';
-  $('brandDialog').showModal();
+  try {selectedLogo=await resizeLogo(file);showLogo();}
+  catch(error) {event.target.value='';$('brandNotice').textContent=error.message;}
+  finally {logoLoading=false;controls.forEach(control=>control.disabled=false);}
 };
+$('brandDialog').addEventListener('cancel',event=>{if(logoLoading)event.preventDefault();});
+$('clearLogo').onclick=()=>{selectedLogo='';brandForm.elements.brandLogo.value='';showLogo();};
+function openBrandManager() {
+  $('brandPicker').replaceChildren(new Option('Yeni marka',''),...registeredBrands.map(entry=>new Option(brandName(entry),brandName(entry))));
+  $('brandPicker').value=brandNames().includes(brand)?brand:'';
+  syncBrandForm();
+  $('brandDialog').showModal();
+}
+function syncBrandForm() {
+  const selected=$('brandPicker').value;
+  brandForm.elements.brandName.value=selected;
+  brandForm.elements.brandLogo.value='';
+  selectedLogo=registeredBrands.find(entry=>brandName(entry)===selected)?.logo||'';
+  showLogo();
+  $('deleteBrand').hidden=!selected;
+  $('brandNotice').textContent='';
+}
+$('addBrand').onclick=openBrandManager;
+$('brandPicker').onchange=syncBrandForm;
 $('closeBrand').onclick=()=>$('brandDialog').close();
-brandForm.onsubmit=async event=>{
-  event.preventDefault();
-  const save=$('saveBrand');
+async function saveBrand(method) {
+  const previous=$('brandPicker').value;
+  const save=$('saveBrand'),remove=$('deleteBrand');
   if(save.disabled) return;
-  save.disabled=true;
+  save.disabled=remove.disabled=true;
   $('brandNotice').textContent='';
   try {
-    const {name}=await api('POST','/api/brands',{name:brandForm.elements.brandName.value});
-    registeredBrands.push(name);
-    brand=name;
+    const result=await api(method,'/api/brands',{previous,name:brandForm.elements.brandName.value.trim(),logo:selectedLogo});
+    brand=method==='DELETE'?'':result.name;
     status='';
     $('brandDialog').close();
-    render();
+    await load();
   } catch(error) {
     $('brandNotice').textContent=error.message;
-  } finally {save.disabled=false;}
-};
+  } finally {save.disabled=remove.disabled=false;}
+}
+brandForm.onsubmit=event=>{event.preventDefault();saveBrand($('brandPicker').value?'PUT':'POST');};
+$('deleteBrand').onclick=()=>{if(confirm('Bu marka silinsin mi?')) saveBrand('DELETE');};
 const backupFile=$('backupFile');
 const backupNotice=$('backupNotice');
 function backupBusy(value) {
