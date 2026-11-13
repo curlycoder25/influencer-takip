@@ -80,6 +80,8 @@ async function sourceRecords(env,path='/api/records',body,method=body===undefine
 export default {
   async fetch(request,env) {
     const url=new URL(request.url), path=url.pathname, method=request.method;
+    const content=contentRoute.exec(path);
+    if(content && !content[1]) return contentRequest(request,env,url,content);
     if(method==='GET' && path==='/') return new Response(null,{status:303,headers:{...headers,Location:'/edit'}});
     if(method==='GET' && path==='/view') return html(PAGE);
     if(method==='GET' && path==='/app.js') return javascript(CLIENT);
@@ -87,11 +89,19 @@ export default {
     if(method==='GET' && path==='/edit/access') return linkLanding();
     if(method==='GET' && path==='/edit/access.js') return javascript(ACCESS_CLIENT);
     const directKey=directAccess.exec(path)?.[1];
-    if(!directKey && !['/edit','/edit/session','/edit/link-session','/edit/app.js','/edit/api/records','/edit/api/brands'].includes(path) && !editRecord.test(path)) {
+    if(!content && !directKey && !['/edit','/edit/session','/edit/link-session','/edit/app.js','/edit/api/records','/edit/api/brands'].includes(path) && !editRecord.test(path)) {
       return json({error:'Bulunamadı'},404);
     }
     if(!env.EDITOR_PASSWORD) return json({error:'Düzenleme erişimi kullanılamıyor'},503);
-    if(method!=='GET' && request.headers.get('Origin')!==url.origin) return json({error:'Erişim reddedildi'},403);
+    const requestOrigin=request.headers.get('Origin');
+    const loginSubmission=method==='POST' && path==='/edit/session';
+    const sameOrigin=requestOrigin===url.origin ||
+      requestOrigin==='https://influencer-takip-demo.neighborlytoffee16.chatgpt.site';
+    // Browser privacy policies may omit Origin or send "null" for the login form.
+    // The shared account still requires its password. Other writes require same-origin.
+    if(method!=='GET' && !sameOrigin && !(loginSubmission && (!requestOrigin || requestOrigin==='null'))) {
+      return json({error:'Erişim reddedildi'},403);
+    }
     const key=await keyFor(env.EDITOR_PASSWORD);
     if(method==='POST' && path==='/edit/session') return createSession(request,key,env.PANEL_USERNAME??'admin',env.PANEL_PASSWORD??env.EDITOR_PASSWORD);
     if(method==='POST' && path==='/edit/link-session') return createLinkSession(request,key,env.EDITOR_LINK_KEY);
@@ -104,6 +114,10 @@ export default {
       await linkAuthorized(key,env.EDITOR_LINK_KEY,request.headers.get('X-Editor-Link-Key'));
     if(method==='GET' && path==='/edit') return authorized?html(EDITOR):login();
     if(!authorized) return json({error:'Oturum açın'},401);
+    if(content) {
+      try { return await contentRequest(request,env,url,content); }
+      catch { return json({error:'Dosya işlemi tamamlanamadı.'},400); }
+    }
     if(method==='GET' && ['/edit/api/records','/edit/api/brands'].includes(path)) return sourceRecords(env,path.slice('/edit'.length));
     if(['POST','PUT','DELETE'].includes(method) && path==='/edit/api/brands') {
       if(!request.headers.get('Content-Type')?.startsWith('application/json')) return json({error:'Geçersiz istek'},400);

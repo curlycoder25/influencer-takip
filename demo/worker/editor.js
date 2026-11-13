@@ -68,12 +68,62 @@ function render() {
       '</td><td><span class="chip '+(record.paymentStatus==='paid'?'ok':'')+'">'+paymentLabels[record.paymentStatus]+'</span></td><td><button data-edit="'+escape(record.id)+'">Aç</button></td></tr>';
     }).join('')+'</tbody></table>';
 }
+let activeUploads=0;
+async function uploadContent(file,progress) {
+  if(!file.size || file.size>1024**3 || file.name.length>255) throw Error('En fazla 1 GB boyutunda bir dosya seç.');
+  const headers=editorLinkKey?{'X-Editor-Link-Key':editorLinkKey}:{};
+  async function send(path,method,body) {
+    const response=await fetch(path,{method,headers,body});
+    if(!response.ok) throw Error('Dosya yüklenemedi. Tekrar dene.');
+    return response.json();
+  }
+  const {id,uploadId,partSize}=await send('/edit/api/content','POST',JSON.stringify({name:file.name,size:file.size}));
+  const url='/edit/api/content/'+id+'?uploadId='+encodeURIComponent(uploadId);
+  const parts=[];
+  try {
+    for(let offset=0;offset<file.size;offset+=partSize) {
+      const end=Math.min(offset+partSize,file.size);
+      parts.push(await send(url+'&part='+(parts.length+1),'PUT',file.slice(offset,end)));
+      progress.textContent='%'+Math.floor(100*end/file.size)+' yüklendi';
+    }
+    await send(url,'POST',JSON.stringify(parts));
+    return {id,name:file.name,size:file.size};
+  } catch(error) {
+    await send(url,'DELETE').catch(()=>{});
+    throw error;
+  }
+}
+function attachContent(row,initial) {
+  row.content=initial;
+  const input=row.querySelector('[type=file]');
+  const status=row.querySelector('.content-status');
+  const refresh=()=>{
+    status.replaceChildren();
+    if(!row.content) return;
+    const link=document.createElement('a');
+    link.href='/api/content/'+row.content.id;
+    link.textContent=row.content.name;
+    status.append(link);
+  };
+  refresh();
+  input.onchange=async()=>{
+    const [file]=input.files;
+    if(!file) return;
+    activeUploads++;
+    input.disabled=true;
+    $('save').disabled=true;
+    try {row.content=await uploadContent(file,status);refresh();}
+    catch(error) {refresh();status.append(document.createTextNode(' '+error.message));}
+    finally {input.value='';input.disabled=false;activeUploads--;$('save').disabled=activeUploads>0;}
+  };
+}
 function addItem(item={kind:'Story',due:'',actual:'',url:''}) {
   const row=document.createElement('div');
   row.className='item';
   row.innerHTML='<label>Format<select data-field="kind"><option>Story</option><option>Reels</option></select></label>'+
     '<label>Planlanan tarih<input type="date" data-field="due"></label><label>Paylaşım tarihi<input type="date" data-field="actual"></label>'+
     '<label>Paylaşım bağlantısı<input type="url" maxlength="1000" data-field="url" placeholder="https://…"></label>'+
+    '<label>İçerik<input type="file" aria-label="İçerik dosyası"><small class="content-status" role="status"></small></label>'+
     '<label class="check"><input type="checkbox" '+(item.actual?'checked':'')+'> Paylaşıldı</label>'+
     (safeUrl(item.url)?'<a href="'+safeUrl(item.url)+'" target="_blank" rel="noopener noreferrer">Bağlantıyı aç ↗</a>':'')+
     '<button type="button" class="late">Paylaşımı sil</button>';
@@ -81,7 +131,8 @@ function addItem(item={kind:'Story',due:'',actual:'',url:''}) {
   const actual=row.querySelector('[data-field=actual]'), check=row.querySelector('[type=checkbox]');
   check.onchange=()=>{actual.value=check.checked?today():'';};
   actual.onchange=()=>{check.checked=Boolean(actual.value);};
-  row.querySelector('button').onclick=()=>row.remove();
+  row.querySelector('button').onclick=()=>{if(!activeUploads)row.remove();};
+  attachContent(row,item.content);
   $('items').append(row);
 }
 function open(record, draft=false) {
@@ -119,7 +170,7 @@ async function load() {
   }
 }
 async function mutate(method, path, data) {
-  if (busy) return;
+  if (busy || activeUploads) return;
   busy=true;
   $('save').disabled=$('renew').disabled=$('close').disabled=true;
   $('formNotice').textContent='';
@@ -141,9 +192,10 @@ function shift(value) {
   return target.toISOString().slice(0,10);
 }
 $('renew').onclick=()=>open({...edit,paymentStatus:'pending',start:shift(edit.start),end:shift(edit.end),
-  items:edit.items.map(item=>({...item,due:shift(item.due),actual:'',url:''}))},true);
+  items:edit.items.map(item=>({...item,due:shift(item.due),actual:'',url:'',content:undefined}))},true);
 form.onsubmit=event=>{
   event.preventDefault();
+  if(activeUploads) return;
   const data=Object.fromEntries(fields.map(key=>[key,form.elements[key].value.trim()]));
   if(!data.name) { $('formNotice').textContent='Influencer adını gir.'; return; }
   if(data.end && data.end<data.start) { $('formNotice').textContent='Bitiş tarihi başlangıç tarihinden önce olamaz.'; return; }
@@ -153,14 +205,14 @@ form.onsubmit=event=>{
       data[key]=Number.isNaN(value)?null:value;
     }
   }
-  data.items=[...$('items').children].map(row=>Object.fromEntries([...row.querySelectorAll('[data-field]')].map(input=>[input.dataset.field,input.value.trim()])));
+  data.items=[...$('items').children].map(row=>({...Object.fromEntries([...row.querySelectorAll('[data-field]')].map(input=>[input.dataset.field,input.value.trim()])),content:row.content}));
   data.id=edit?.id || form.dataset.newId || crypto.randomUUID();
   form.dataset.newId=data.id;
   mutate('PUT','/edit/api/records/'+data.id,data);
 };
 $('dialog').addEventListener('close',()=>{delete form.dataset.newId;});
-$('dialog').addEventListener('cancel',event=>{if(busy)event.preventDefault();});
-$('close').onclick=()=>$('dialog').close();
+$('dialog').addEventListener('cancel',event=>{if(busy||activeUploads)event.preventDefault();});
+$('close').onclick=()=>{if(!activeUploads)$('dialog').close();};
 $('addItem').onclick=()=>addItem();
 $('add').onclick=()=>open();
 $('brands').onclick=event=>{const button=event.target.closest('[data-brand]');if(button){brand=button.dataset.brand;status='';render();}};

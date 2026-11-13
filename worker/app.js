@@ -81,6 +81,7 @@ function addItem(item={kind:'Story',due:'',actual:'',url:''}) {
   check.onchange=()=>{actual.value=check.checked?today():'';};
   actual.onchange=()=>{check.checked=Boolean(actual.value);};
   row.querySelector('button').onclick=()=>row.remove();
+  row.content=item.content;
   $('items').append(row);
 }
 function open(record, draft=false) {
@@ -137,7 +138,7 @@ function shift(value) {
   return target.toISOString().slice(0,10);
 }
 $('renew').onclick=()=>open({...edit,paymentStatus:'pending',start:shift(edit.start),end:shift(edit.end),
-  items:edit.items.map(item=>({...item,due:shift(item.due),actual:'',url:''}))},true);
+  items:edit.items.map(item=>({...item,due:shift(item.due),actual:'',url:'',content:undefined}))},true);
 $('remove').onclick=()=>{
   if(edit && confirm('Bu iş birliği ve paylaşım planı silinsin mi?')) mutate('DELETE','/api/records/'+edit.id);
 };
@@ -152,7 +153,7 @@ form.onsubmit=event=>{
       data[key]=Number.isNaN(value)?null:value;
     }
   }
-  data.items=[...$('items').children].map(row=>Object.fromEntries([...row.querySelectorAll('[data-field]')].map(input=>[input.dataset.field,input.value.trim()])));
+  data.items=[...$('items').children].map(row=>({...Object.fromEntries([...row.querySelectorAll('[data-field]')].map(input=>[input.dataset.field,input.value.trim()])),content:row.content}));
   data.id=edit?.id || form.dataset.newId || crypto.randomUUID();
   form.dataset.newId=data.id;
   mutate('PUT','/api/records/'+data.id,data);

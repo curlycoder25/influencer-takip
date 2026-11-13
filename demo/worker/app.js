@@ -71,9 +71,9 @@ function showDetails(record) {
     ['Haftalık Story hedefi',escape(record.weeklyStories)],['Aylık Story hedefi',escape(record.monthlyStories)],['Aylık Reels hedefi',escape(record.monthlyReels)],['Not',escape(record.notes)]
   ];
   const info=values.map(([label,value])=>'<div'+(label==='Not'?' class="full"':'')+'><dt>'+label+'</dt><dd>'+(value||'—')+'</dd></div>').join('');
-  const posts=record.items.map(item=>'<tr><td>'+escape(item.kind)+'</td><td>'+stamp(item.due)+'</td><td>'+stamp(item.actual)+'</td><td>'+link(item.url)+'</td></tr>').join('');
+  const posts=record.items.map(item=>'<tr><td>'+escape(item.kind)+'</td><td>'+stamp(item.due)+'</td><td>'+stamp(item.actual)+'</td><td>'+link(item.url)+'</td><td>'+(item.content && /^[a-f0-9-]{36}$/.test(item.content.id)?'<a href="/api/content/'+item.content.id+'">'+escape(item.content.name)+'</a>':'—')+'</td></tr>').join('');
   $('details').innerHTML='<dl class="grid details">'+info+'</dl><h2>Paylaşım planı</h2>'+
-    (posts?'<div class="scroll detailPosts"><table class="table"><thead><tr><th>Format</th><th>Planlanan tarih</th><th>Paylaşım tarihi</th><th>Bağlantı</th></tr></thead><tbody>'+posts+'</tbody></table></div>':'<p>Henüz paylaşım eklenmedi.</p>');
+    (posts?'<div class="scroll detailPosts"><table class="table"><thead><tr><th>Format</th><th>Planlanan tarih</th><th>Paylaşım tarihi</th><th>Bağlantı</th><th>İçerik</th></tr></thead><tbody>'+posts+'</tbody></table></div>':'<p>Henüz paylaşım eklenmedi.</p>');
   if (!$('dialog').open) $('dialog').showModal();
 }
 async function load() {

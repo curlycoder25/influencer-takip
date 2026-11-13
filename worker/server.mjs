@@ -66,7 +66,11 @@ function clean(record,id) {
   const items=[];
   for (const item of record.items) {
     if (!item || !options.kinds.includes(item.kind) || !optionalDate(item.due) || !optionalDate(item.actual) || !link(item.url)) return null;
-    items.push({kind:item.kind,due:item.due,actual:item.actual,url:item.url});
+    const content=item.content??null;
+    if(content && (typeof content.id!=='string' || !recordId.test(content.id) || !string(content.name,255) || !content.name.trim() ||
+      !Number.isSafeInteger(content.size) || content.size<1 || content.size>1024**3)) return null;
+    items.push({kind:item.kind,due:item.due,actual:item.actual,url:item.url,
+      ...(content?{content:{id:content.id,name:content.name,size:content.size}}:{})});
   }
   const {name,handle,brand,type,start,end,tracking,payment,notes}=record;
   return {id,name,handle,brand,type,start,end,tracking,payment,paymentStatus,notes,items,weeklyStories,monthlyStories,monthlyReels};
