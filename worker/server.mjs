@@ -143,6 +143,11 @@ export default {
     if(request.method==='GET' && url.pathname==='/') return asset(PAGE,'text/html; charset=utf-8');
     if(request.method==='GET' && url.pathname==='/app.js') return asset(CLIENT,'application/javascript; charset=utf-8');
     try {
+      const content=contentRoute.exec(url.pathname);
+      if(content && !content[1]) {
+        if(request.method!=='GET' && request.headers.get('Origin')!==url.origin) return json({error:'Erişim reddedildi'},403);
+        return await contentRequest(request,env,url,content);
+      }
       if(url.pathname==='/api/brands') {
         if(request.method==='GET') return json(await listBrands(env.DB));
         if(['POST','PUT','DELETE'].includes(request.method)) {
